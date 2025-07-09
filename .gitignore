@@ -1,0 +1,11 @@
+# Ignore Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# Ignore macOS files
+.DS_Store
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+
+.vscode/
