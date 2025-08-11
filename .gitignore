@@ -1,11 +1,28 @@
-# Ignore Jupyter notebook checkpoints
-.ipynb_checkpoints/
+# Python cache / compiled files
+__pycache__/
+*.py[cod]
+*$py.class
 
-# Ignore macOS files
+# Jupyter
+.ipynb_checkpoints/
+SGLBO_IRIS.ipynb
+
+# macOS
 .DS_Store
 
-# Ignore Python cache
-__pycache__/
-*.pyc
-
+# Editors
 .vscode/
+.idea/
+
+# Build
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Logs
+*.log
