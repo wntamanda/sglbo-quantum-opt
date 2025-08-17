@@ -34,3 +34,13 @@ def make_cost_fn(qnn, estimator, X_train, y_train, batch_size=16):
             return float(loss), float(var)
         return float(loss)
     return cost_fn
+
+def make_predict_fn(qnn):
+    # probs in [0,1]
+    return lambda theta, X, shots=None: (qnn.forward(X, theta).flatten() + 1.0) * 0.5
+
+def make_set_eval_shots_fn(estimator):
+    def _set(shots: int):
+        if hasattr(estimator, "set_options"):
+            estimator.set_options(shots=shots)
+    return _set

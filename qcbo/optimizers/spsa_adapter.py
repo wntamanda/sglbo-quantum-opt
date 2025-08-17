@@ -1,5 +1,17 @@
+# 17.08.2025 (fixes)
+# strict budget compliance (clamp final shots)
+# shared plateau helper with SGLBO
+# optional log_every argument
+
+from __future__ import annotations
 import numpy as np
-from qiskit_algorithms.optimizers import SPSA
+
+def _plateau(losses: list[float], window: int, eps: float) -> bool:
+    """True if loss has stagnated (relative) for <window> steps."""
+    if len(losses) <= window:
+        return False
+    a, b = losses[-1], losses[-1 - window]
+    return abs(a - b) < eps * max(abs(b), 1e-12)
 
 def run_spsa(
     *,
@@ -7,74 +19,93 @@ def run_spsa(
     budget_shots: int,
     n_params: int,
     cost_fn,
-    qnn, estimator, X_test, y_test,
+    predict_fn,
+    set_eval_shots_fn,
+    X_test, y_test,
     shots_per_eval: int = 256,
     verbose: bool = False,
+    log_every: int = 5,
     plateau_window: int = 25,
     plateau_eps: float = 3e-3,
+    # SPSA hyper-params
+    a0: float = 0.05,
+    c0: float = 0.1,
+    alpha: float = 0.602,
+    gamma: float = 0.101,
 ):
     """
-    Pure SPSA runner. No globals. Returns (shots_hist, loss_hist, acc_hist, theta_final, stop_reason).
+    Returns
+        shots_hist, loss_hist, acc_hist, theta_final, stop_reason
+    Shot budget counts 2*shots_per_eval per iteration (± perturb).
     """
-    rng = np.random.default_rng(seed)
-    theta0 = rng.standard_normal(n_params)
+    rng   = np.random.default_rng(seed)
+    theta = rng.standard_normal(n_params)
 
-    spsa_shots_used = 0
+    shots_used = 0
     shots_hist, loss_hist, acc_hist = [], [], []
-    theta_last = theta0.copy()
     stop_reason = "unknown"
+    k = 1
 
-    def spsa_objective(theta):
-        nonlocal spsa_shots_used, theta_last, stop_reason
-        theta_last = theta
+    # diagnostic logging helper (not budgeted)
+    def _log(theta_now):
+        set_eval_shots_fn(256)
+        loss = float(cost_fn(theta_now, 256, False))
+        probs = predict_fn(theta_now, X_test, shots=None).flatten()
+        acc   = float(((probs > 0.5).astype(int) == y_test).mean())
 
-        if hasattr(estimator, "set_options"):
-            estimator.set_options(shots=shots_per_eval)
-        loss = cost_fn(theta, shots_per_eval, False)
+        loss_hist.append(loss)
+        acc_hist.append(acc)
 
-        spsa_shots_used += shots_per_eval
-        if spsa_shots_used >= budget_shots:
+        if verbose and (len(loss_hist) == 1 or len(loss_hist) % log_every == 0):
+            print(f"SPSA iter {len(loss_hist)-1:3d} | "
+                  f"shots {shots_used:7d} | loss {loss:6.3f} | acc {acc:5.3f}")
+
+    # initial log at 0 shots
+    shots_hist.append(shots_used)
+    _log(theta)
+
+    # optimisation loop
+    while True:
+        # remaining budget check (≥ two calls needed)
+        budget_left = budget_shots - shots_used
+        if budget_left < 2:
             stop_reason = "budget"
-            raise StopIteration
+            break
 
-        # log once per iteration
-        if len(shots_hist) == 0 or spsa_shots_used > shots_hist[-1]:
-            shots_hist.append(spsa_shots_used)
+        # clamp shots for the last possible iteration if needed
+        cur_shots = min(shots_per_eval, budget_left // 2)
 
-            if hasattr(estimator, "set_options"):
-                estimator.set_options(shots=256)
-            loss_val = cost_fn(theta, 256, False)
-            loss_hist.append(loss_val)
+        # schedules
+        ak = a0 / (k ** alpha)
+        ck = c0 / (k ** gamma)
 
-            probs = (qnn.forward(X_test, theta).flatten() + 1) * 0.5
-            acc_val = ((probs > 0.5).astype(int) == y_test).mean()
-            acc_hist.append(acc_val)
+        # Rademacher perturbation
+        delta = rng.choice([-1.0, 1.0], size=n_params)
 
-            if verbose:
-                print(f"SPSA iter {len(shots_hist):3d} | shots {spsa_shots_used:7d} "
-                      f"| loss {loss_val:6.3f} | acc {acc_val:5.3f}")
+        # two evaluations at +/- ck
+        set_eval_shots_fn(cur_shots)
+        f_plus  = float(cost_fn(theta + ck * delta, cur_shots, False))
+        set_eval_shots_fn(cur_shots)
+        f_minus = float(cost_fn(theta - ck * delta, cur_shots, False))
 
-            flat = (
-                len(loss_hist) > plateau_window and
-                abs(loss_hist[-1] - loss_hist[-1 - plateau_window]) <
-                plateau_eps * max(abs(loss_hist[-1 - plateau_window]), 1e-12)
-            )
-            if flat:
-                stop_reason = "plateau"
-                raise StopIteration
+        # gradient estimate and update
+        ghat  = (f_plus - f_minus) / (2.0 * ck) * delta
+        theta = theta - ak * ghat
 
-        return loss
+        # bookkeeping & logging
+        shots_used += 2 * cur_shots
+        shots_hist.append(shots_used)
+        _log(theta)
 
-    spsa = SPSA(maxiter=300, learning_rate=0.05, perturbation=0.1)
+        # plateau stopping
+        if _plateau(loss_hist, plateau_window, plateau_eps):
+            stop_reason = "plateau"
+            break
 
-    try:
-        res = spsa.minimize(fun=spsa_objective, x0=theta0)
-        theta_final = res.x
-        stop_reason = "maxiter"
-    except StopIteration:
-        theta_final = theta_last
+        k += 1
 
-    if verbose:
-        print(f"SPSA stopped due to: {stop_reason} | final shots: {shots_hist[-1]}")
-
-    return (np.array(shots_hist), np.array(loss_hist), np.array(acc_hist), theta_final, stop_reason)
+    return (np.array(shots_hist),
+            np.array(loss_hist),
+            np.array(acc_hist),
+            theta,
+            stop_reason)

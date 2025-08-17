@@ -5,8 +5,9 @@ from typing import Tuple, Dict, Any
 from sklearn import datasets, preprocessing, model_selection
 
 from qcbo.noise.aer_noise import estimators_by_level
-from qcbo.models.qnn import build_qnn, make_cost_fn
-
+from qcbo.models.qnn import (
+    build_qnn, make_cost_fn, make_predict_fn, make_set_eval_shots_fn
+)
 
 def _load_split(seed: int = 42, test_size: float = 0.2):
     X, y = datasets.load_iris(return_X_y=True)
@@ -28,7 +29,7 @@ def build_problem(
     """
     Returns:
       qnn, estimator, cost_fn, (X_train, y_train, X_test, y_test), meta, model_info
-    where model_info is the dict returned by your build_qnn (contains ansatz, feature_map, etc.)
+    where model_info is the dict returned by build_qnn (contains ansatz, feature_map, etc.)
     """
     X_train, X_test, y_train, y_test = _load_split(seed=seed)
     num_qubits = X_train.shape[1]
@@ -45,6 +46,9 @@ def build_problem(
 
     # Cost function from qnn helper
     cost_fn = make_cost_fn(qnn, estimator, X_train, y_train, batch_size=batch_size)
+    predict_fn = make_predict_fn(qnn)
+    set_eval_shots_fn = make_set_eval_shots_fn(estimator)
+
 
     meta: Dict[str, Any] = dict(
         dataset="iris",
@@ -55,4 +59,4 @@ def build_problem(
         seed=seed,
     )
     splits = (X_train, y_train, X_test, y_test)
-    return qnn, estimator, cost_fn, splits, meta, model_info
+    return qnn, estimator, cost_fn, splits, meta, model_info, predict_fn, set_eval_shots_fn

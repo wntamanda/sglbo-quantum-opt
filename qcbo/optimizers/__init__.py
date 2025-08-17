@@ -1,16 +1,14 @@
-from .sglbo import run_sglbo
-from .spsa_adapter import run_spsa
-from .adam_adapter import run_adam
-from .cobyla_adapter import run_cobyla
-
-OPTIMIZERS = {
-    "sglbo": run_sglbo,
-    "spsa": run_spsa,
-    "adam": run_adam,
-    "cobyla": run_cobyla,
-}
-
 def get_runner(name: str):
-    if name not in OPTIMIZERS:
-        raise ValueError(f"Unknown optimizer '{name}'. Available: {list(OPTIMIZERS)}")
-    return OPTIMIZERS[name]
+    if name == "sglbo":
+        from .sglbo import run_sglbo
+        return run_sglbo
+    if name == "spsa":
+        from .spsa_adapter import run_spsa
+        return run_spsa
+    if name == "adam":
+        from .adam_adapter import run_adam
+        return run_adam
+    if name == "cobyla":
+        from .cobyla_adapter import run_cobyla
+        return run_cobyla
+    raise ValueError(f"Unknown optimizer '{name}'. Available: ['sglbo','spsa','adam','cobyla']")
